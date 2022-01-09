@@ -8,6 +8,7 @@ use std::mem::size_of;
 use nom::{IResult, bytes::complete::tag, bytes::complete::take};
 use nom::number::complete::{le_u32, le_u16, le_u8};
 
+
 extern crate num;
 #[macro_use]
 extern crate num_derive;
@@ -93,7 +94,6 @@ static TLV_INFO_MAGIC:      &[u8] = &[ 0x07, 0x69 ];
 #[allow(dead_code)]
 static TLV_PROT_INFO_MAGIC: &[u8] = &[ 0x08, 0x69 ]; /* not implemented yet */
 
-
 fn parse_u32(i: &[u8]) -> IResult<&[u8], u32> {
     let (i, bytes) = take(4u8)(i)?;
     Ok((i, le_u32(bytes)?.1))
@@ -142,13 +142,15 @@ fn parse_tlv(i: &[u8]) -> IResult<&[u8], ImageTLV> {
   Ok((i, ImageTLV { it_type, it_len }))
 }
 
-fn parse_tlv_payload(i: &[u8], len: u16) -> IResult<&[u8], &[u8]> {
+fn parse_binary_len(i: &[u8], len: usize) -> IResult<&[u8], &[u8]> {
   let (i, payload) = take(len)(i)?;
   Ok((i, payload))
 }
 
 fn main() {
     println!("mcuboot-tlv-parser v0.0.1");
+    println!("-------------------------");
+    let mut offset: usize = 0;
 
     // Get first argument: filename
     if env::args().count() < 2 {
@@ -158,23 +160,40 @@ fn main() {
     let filename = env::args().nth(1).unwrap();
 
     // Open image file
-    println!("[*] Opening image file {}", filename);
+    print!("[*] Opening image file {}", filename);
     let buf = fs::read(filename).unwrap();
-    println!("[*] Total file size:  {}", buf.len());
+    println!(", total file size:  {}", buf.len());
 
     // Parser image header
-    let (_, img_hdr) = parse_img_hdr(&buf).unwrap();
-    println!("[*] {:?}", img_hdr);
+    let (i, img_hdr) = parse_img_hdr(&buf).unwrap();
+    println!("[*] Offset: {:08}, 0x{:08x}: {:?}", offset, offset, img_hdr);
+    offset += img_hdr.hdr_size as usize;
+
+    // Parse padding of image header (32b header size ->> img_hr.hdr_size)
+    let (i, padding) = parse_binary_len(i, img_hdr.hdr_size as usize - size_of::<ImageHeader>()).unwrap();
+    println!("[*] Offset: {:08}, 0x{:08x}: ImageHeader padding {:?} bytes: {:x?} ...",
+             offset, offset, padding.len(), &padding[0 .. 8]);
+
+    // Get binary image
+    let (i, bin_img) = parse_binary_len(i, img_hdr.img_size as usize).unwrap();
+    println!("[*] Offset: {:08}, 0x{:08x}: BinaryImage {:?} bytes: {:x?} ...",
+             offset, offset, bin_img.len(), &bin_img[0 .. 8]);
+    offset += img_hdr.img_size as usize;
 
     // Parse TLV header
-    let tlv_off = img_hdr.hdr_size as u32 + img_hdr.img_size;
-    let (_, tlv_info) = parse_tlv_info(&buf[tlv_off as usize .. buf.len()]).unwrap();
-    println!("[*] {:?}", tlv_info);
+    let (_, tlv_info) = parse_tlv_info(i).unwrap();
+    println!("[*] Offset: {:08}, 0x{:08x}: {:?}", offset, offset, tlv_info);
 
     // Check computed image size with actual file size
-    let img_total_size = tlv_off + img_hdr.prot_tlv_size as u32 + tlv_info.tlv_tot as u32;
-    println!("[*] Image total size: {}", img_total_size);
-    assert!(buf.len() == img_total_size as usize);
+    let img_total_size = offset as u32 + img_hdr.prot_tlv_size as u32 + tlv_info.tlv_tot as u32;
+    if !(buf.len() == img_total_size as usize) {
+        println!("File length and calculated file length are not equal! ({} vs. {})",
+            buf.len(), img_total_size);
+        return;
+    }
+
+    // Move past the TLVInfo header
+    offset += size_of::<ImageTLVInfo>();
 
     // Check for protected TLVs
     if img_hdr.prot_tlv_size != 0 {
@@ -183,19 +202,17 @@ fn main() {
     }
 
     // Iterate over TLVs
-    let mut tlv_it_idx = tlv_off as usize + size_of::<ImageTLVInfo>();
-
-    while tlv_it_idx < img_total_size as usize {
-        let (i, tlv) = parse_tlv(&buf[tlv_it_idx .. buf.len()]).unwrap();
-        let (_, payload) = parse_tlv_payload(i, tlv.it_len).unwrap();
+    while offset < img_total_size as usize {
+        let (i, tlv) = parse_tlv(&buf[offset .. buf.len()]).unwrap();
+        let (_, payload) = parse_binary_len(i, tlv.it_len as usize).unwrap();
         let tlv_type: TlvKinds = match num::FromPrimitive::from_u16(tlv.it_type) {
             Some(inner) => inner,
             None => TlvKinds::TLV_UNKNOWN,
         };
-        println!("");
-        println!("[*] {:?} @ {}, {}b", tlv_type, tlv_it_idx, tlv.it_len);
-        println!("{:02X?}", payload);
-        tlv_it_idx += tlv.it_len as usize + size_of::<ImageTLV>();
+        println!("[*] Offset: {:08}, 0x{:08x}: {:?}, {} bytes: {:x?} ...",
+                 offset, offset, tlv_type, tlv.it_len, &payload[0 .. 8]);
+        //println!("\t\t{:02X?}", payload);
+        offset += tlv.it_len as usize + size_of::<ImageTLV>();
     }
 }
 
