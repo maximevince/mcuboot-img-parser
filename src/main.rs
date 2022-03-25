@@ -147,6 +147,24 @@ fn parse_binary_len(i: &[u8], len: usize) -> IResult<&[u8], &[u8]> {
   Ok((i, payload))
 }
 
+fn print_img_hdr_flags(flags: u32) {
+    if (flags & TlvFlags::PIC as u32) != 0 {
+        println!("                                : TLV Flag: PIC");
+    }
+    if (flags & TlvFlags::NON_BOOTABLE as u32) != 0 {
+        println!("                                : TLV Flag: NON_BOOTABLE");
+    }
+    if (flags & TlvFlags::ENCRYPTED_AES128 as u32) != 0 {
+        println!("                                : TLV Flag: ENCRYPTED_AES128");
+    }
+    if (flags & TlvFlags::RAM_LOAD as u32) != 0 {
+        println!("                                : TLV Flag: RAM_LOAD");
+    }
+    if (flags & TlvFlags::ENCRYPTED_AES256 as u32) != 0 {
+        println!("                                : TLV Flag: ENCRYPTED_AES256");
+    }
+}
+
 fn main() {
     println!("mcuboot-tlv-parser v0.0.1");
     println!("-------------------------");
@@ -168,6 +186,7 @@ fn main() {
     let (i, img_hdr) = parse_img_hdr(&buf).unwrap();
     println!("[*] Offset: {:08}, 0x{:08x}: {:?}", offset, offset, img_hdr);
     offset += img_hdr.hdr_size as usize;
+    print_img_hdr_flags(img_hdr.flags);
 
     // Parse padding of image header (32b header size ->> img_hr.hdr_size)
     let (i, padding) = parse_binary_len(i, img_hdr.hdr_size as usize - size_of::<ImageHeader>()).unwrap();
