@@ -1,6 +1,17 @@
 # mcuboot-img-parser
 MCUboot binary firmware image parser
 
+## Building
+Use Cargo to build:
+```sh
+cargo build
+```
+
+Or for a release build:
+```sh
+cargo build --release
+```
+
 ## Usage
 
 ```sh
